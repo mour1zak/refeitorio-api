@@ -1,0 +1,73 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  ADMIN
+  EMPLOYEE
+}
+
+enum MealPeriod {
+  BREAKFAST
+  LUNCH
+  DINNER
+}
+
+enum ReservationStatus {
+  ACTIVE
+  CANCELLED
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  name      String
+  email     String   @unique
+  password  String
+  role      Role     @default(EMPLOYEE)
+  createdAt DateTime @default(now())
+
+  reservations MealReservation[]
+
+  @@map("users")
+}
+
+model Menu {
+  id          Int        @id @default(autoincrement())
+  date        DateTime   @db.Date
+  period      MealPeriod
+  description String
+  capacity    Int
+  createdAt   DateTime   @default(now())
+
+  reservations MealReservation[]
+
+  @@unique([date, period])
+  @@map("menus")
+}
+
+// Cada linha é um evento de reserva (nunca é apagada ou reaproveitada, para
+// preservar histórico de cancelamentos). `activeSlotKey` só é preenchido
+// (`${userId}:${date}:${period}`) enquanto a reserva está ACTIVE; ao cancelar
+// ele vira null. Como a unicidade é UNIQUE simples (não parcial), reservar de
+// novo o mesmo slot depois de cancelar é sempre um INSERT de linha nova.
+model MealReservation {
+  id            Int               @id @default(autoincrement())
+  userId        Int
+  menuId        Int
+  date          DateTime          @db.Date
+  period        MealPeriod
+  status        ReservationStatus @default(ACTIVE)
+  activeSlotKey String?           @unique
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  cancelledAt   DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  menu Menu @relation(fields: [menuId], references: [id], onDelete: Restrict)
+
+  @@map("meal_reservations")
+}
