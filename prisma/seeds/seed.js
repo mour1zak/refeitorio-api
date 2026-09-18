@@ -36,6 +36,11 @@ async function upsertMenu(date, period, description, capacity) {
   });
 }
 
+// ATENÇÃO: essa mesma fórmula está duplicada em
+// `src/reservations/reservations.service.ts` (não dá pra compartilhar um
+// módulo TS com este script CommonJS puro sem mexer em tsconfig/allowJs).
+// Se o formato mudar lá, mudar aqui também — senão o índice único deixa de
+// detectar duplicidade nas linhas criadas pelo seed.
 function buildActiveSlotKey(userId, date, period) {
   return `${userId}:${date.toISOString()}:${period}`;
 }

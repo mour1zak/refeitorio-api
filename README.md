@@ -263,6 +263,12 @@ Segue o padrão do Prisma 7: a `datasource` no `schema.prisma` não tem `url`; a
 **Por que `password` nunca aparece nas respostas.**
 Toda query em `UsersService` usa `select` explícito (nunca `select: { password: false }`). O único método que seleciona `password` é de uso interno do `AuthService` para comparar o hash no login — nunca é exposto por um controller.
 
+**Por que as foreign keys de `MealReservation` têm `onDelete` diferentes (`userId`: `Cascade`, `menuId`: `Restrict`).**
+`menuId: Restrict` é deliberado: um cardápio com reservas vinculadas não pode ser apagado, porque cada reserva registra qual refeição foi servida — apagar o `Menu` perderia essa rastreabilidade (a alternativa seria `SetNull`, mas isso exigiria `menuId` opcional, o que não faz sentido pra uma reserva). Já `userId: Cascade` é uma escolha **questionável, registrada conscientemente**: apagar um usuário apagaria silenciosamente todo o histórico de reservas dele — exatamente o dado que o `activeSlotKey` foi desenhado pra preservar. A mitigação é que **não existe `DELETE /users` no escopo desta avaliação**, então hoje é risco latente, não bug ativo. Se um endpoint de exclusão de usuário for adicionado no futuro, a escolha correta seria `Restrict` (obriga desativar/reatribuir reservas primeiro) ou soft-delete (`deletedAt` no `User`) em vez de `Cascade`.
+
+**Por que a porta `5432` e as credenciais `postgres`/`postgres` do `docker-compose.yml` são aceitáveis aqui.**
+A porta é necessária nesta rodada porque a aplicação roda fora do container (`npm run start:dev` direto na máquina — decisão explícita, só o Postgres é containerizado); se a aplicação também fosse containerizada, bastaria a rede interna do compose, sem publicar a porta pro host. As credenciais hardcoded são aceitáveis para um banco efêmero de desenvolvimento local, sem dados reais e sem exposição pública — e refletem o YAML sugerido no próprio enunciado. Em um ambiente compartilhado ou de produção, virariam variáveis de ambiente.
+
 ## Bateria de testes manuais (Fase 4)
 
 Confirmados manualmente via `curl` contra uma instância local rodando (`npm run start:dev`):
@@ -282,7 +288,7 @@ Confirmados manualmente via `curl` contra uma instância local rodando (`npm run
 
 Suíte E2E (`vitest` + `supertest`) cobrindo a bateria obrigatória do enunciado, incluindo os dois lados do conflito `409` (duplicidade e capacidade) e tentativas de burlar autenticação/autorização (token malformado, cancelar reserva de outro usuário, role errada).
 
-**Banco isolado**: os testes rodam contra um banco separado (`refeitorio_test`), nunca contra o banco de desenvolvimento. Configuração:
+**Banco isolado**: os testes rodam contra um banco separado (`refeitorio_test`), nunca contra o banco de desenvolvimento — e isso não é só uma convenção, é **verificado no boot da suíte**: `test/setup-env.ts` recusa rodar (lança erro, zero testes executam) se `.env.test` não existir ou se a `DATABASE_URL` carregada não apontar para `refeitorio_test`. Sem essa trava, esquecer o `cp` abaixo faria a suíte cair de volta no `.env` de desenvolvimento — e o `beforeEach` roda `deleteMany()` em todas as tabelas antes de cada teste, o que apagaria dados reais. Configuração:
 
 ```bash
 cp .env.test.example .env.test
@@ -304,6 +310,35 @@ Depois disso:
 npm run test:e2e
 ```
 
-Cada teste zera as tabelas do banco de teste antes de rodar (`beforeEach`) e cria só os dados que precisa — determinístico, não depende de ordem de execução. Confirmado rodando a suíte 3 vezes seguidas com o mesmo resultado (14/14).
+Cada teste zera as tabelas do banco de teste antes de rodar (`beforeEach`) e cria só os dados que precisa — determinístico, não depende de ordem de execução. Confirmado rodando a suíte 5 vezes seguidas com o mesmo resultado (15/15).
 
-> O que está fora do escopo desta entrega (e por quê) está descrito na seção "O que foi implementado", no início deste documento.
+## Segurança — vulnerabilidades conhecidas em dependências (aceitação de risco documentada)
+
+`npm audit --omit=dev` reporta **4 vulnerabilidades HIGH**, todas na mesma cadeia de dependência:
+
+```
+@prisma/client@7.10.0 (produção)
+  └── prisma@7.10.0 (peer dependency "*", instalada automaticamente pelo npm)
+        ├── @prisma/config → deepmerge-ts   (stack exhaustion em merge de objetos recursivos)
+        └── mysql2                          (downgrade de auth plugin vaza credencial em texto claro)
+```
+
+**Não há correção disponível sem violar o requisito obrigatório do enunciado.** O único fix que o
+`npm audit fix --force` oferece é fazer downgrade para `prisma@6.19.3` — mas o `PRE-05-REFEITORIO.md`
+exige explicitamente **Prisma 7.10.0**. As versões corrigidas de `deepmerge-ts` (`>=8`) e `mysql2`
+(`>3.23`) não são compatíveis com a linha 7.10.0 do Prisma.
+
+**Análise de atingibilidade** (por que o risco real é menor do que "4 HIGH" sozinho sugere):
+- **`mysql2`** (vazamento de credencial via downgrade de auth plugin) — **inalcançável nesta
+  aplicação**. O projeto só instancia `PrismaPg` (driver do PostgreSQL); nunca abre conexão MySQL,
+  então o código vulnerável (negociação de auth plugin MySQL) nunca executa. O pacote está presente
+  só como dependência transitiva do CLI do Prisma, não do client em runtime.
+- **`deepmerge-ts`** (esgotamento de pilha em grafos recursivos) — **inalcançável em runtime**. É
+  usado pelo `@prisma/config` para mesclar configuração do **CLI** (`migrate`/`generate`), não pelo
+  `PrismaClient` em produção. A entrada mesclada não vem de dado controlado por usuário da API.
+
+**Mitigações aplicadas/recomendadas**:
+1. Não rodar `npm audit fix --force` (quebraria o requisito de versão do Prisma).
+2. Em build de produção, `npx prisma generate` roda na etapa de build, nunca em runtime.
+3. Reavaliar a cada release do Prisma 7.x — se uma versão patch resolver a cadeia sem quebrar a
+   API, atualizar.

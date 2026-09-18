@@ -31,13 +31,19 @@ export class ReservationsService {
           throw new NotFoundException('Menu não encontrado');
         }
 
-        const activeSlotKey = this.buildActiveSlotKey(userId, menu.date, menu.period);
+        const activeSlotKey = this.buildActiveSlotKey(
+          userId,
+          menu.date,
+          menu.period,
+        );
 
         const duplicada = await tx.mealReservation.findUnique({
           where: { activeSlotKey },
         });
         if (duplicada) {
-          throw new ConflictException('Usuário já possui reserva ativa neste período');
+          throw new ConflictException(
+            'Usuário já possui reserva ativa neste período',
+          );
         }
 
         const totalReservado = await tx.mealReservation.count({
@@ -63,7 +69,9 @@ export class ReservationsService {
       // checagem de duplicidade antes de qualquer uma commitar, o unique
       // index em activeSlotKey rejeita o segundo INSERT com P2002.
       if (this.isUniqueViolation(error)) {
-        throw new ConflictException('Usuário já possui reserva ativa neste período');
+        throw new ConflictException(
+          'Usuário já possui reserva ativa neste período',
+        );
       }
       throw error;
     }
@@ -78,7 +86,11 @@ export class ReservationsService {
 
     const updated = await this.prisma.mealReservation.update({
       where: { id },
-      data: { status: 'CANCELLED', activeSlotKey: null, cancelledAt: new Date() },
+      data: {
+        status: 'CANCELLED',
+        activeSlotKey: null,
+        cancelledAt: new Date(),
+      },
     });
 
     return { cancelled: true, reservation: updated };
@@ -92,7 +104,9 @@ export class ReservationsService {
   }
 
   private async ensureExists(id: number) {
-    const reservation = await this.prisma.mealReservation.findUnique({ where: { id } });
+    const reservation = await this.prisma.mealReservation.findUnique({
+      where: { id },
+    });
     if (!reservation) {
       throw new NotFoundException('Reserva não encontrada');
     }
@@ -107,11 +121,23 @@ export class ReservationsService {
     return reservation;
   }
 
-  private buildActiveSlotKey(userId: number, date: Date, period: MealPeriod): string {
+  // ATENÇÃO: essa mesma fórmula está duplicada em `prisma/seeds/seed.js`
+  // (não dá pra compartilhar um módulo TS com um script CommonJS puro sem
+  // mexer em tsconfig/allowJs). Se o formato mudar aqui, mudar lá também —
+  // senão o índice único deixa de detectar duplicidade nas linhas do seed.
+  private buildActiveSlotKey(
+    userId: number,
+    date: Date,
+    period: MealPeriod,
+  ): string {
     return `${userId}:${date.toISOString()}:${period}`;
   }
 
   private isUniqueViolation(error: unknown): boolean {
-    return typeof error === 'object' && error !== null && (error as { code?: string }).code === 'P2002';
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      (error as { code?: string }).code === 'P2002'
+    );
   }
 }

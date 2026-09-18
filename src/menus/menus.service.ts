@@ -20,7 +20,9 @@ export class MenusService {
       });
     } catch (error) {
       if (this.isUniqueViolation(error)) {
-        throw new ConflictException('Já existe um cardápio para esta data e período');
+        throw new ConflictException(
+          'Já existe um cardápio para esta data e período',
+        );
       }
       throw error;
     }
@@ -48,6 +50,10 @@ export class MenusService {
   }
 
   private isUniqueViolation(error: unknown): boolean {
-    return typeof error === 'object' && error !== null && (error as { code?: string }).code === 'P2002';
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      (error as { code?: string }).code === 'P2002'
+    );
   }
 }

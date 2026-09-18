@@ -21,7 +21,9 @@ describe('Refeitório API (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+    app.useGlobalPipes(
+      new ValidationPipe({ whitelist: true, transform: true }),
+    );
     await app.init();
 
     prisma = app.get(PrismaService);
@@ -50,14 +52,24 @@ describe('Refeitório API (e2e)', () => {
     });
   }
 
-  async function loginAs(email: string, password = DEMO_PASSWORD): Promise<string> {
-    const res = await request(app.getHttpServer()).post('/auth/login').send({ email, password });
+  async function loginAs(
+    email: string,
+    password = DEMO_PASSWORD,
+  ): Promise<string> {
+    const res = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email, password });
     return res.body.accessToken as string;
   }
 
   async function createMenu(
     adminToken: string,
-    overrides: Partial<{ date: string; period: string; description: string; capacity: number }> = {},
+    overrides: Partial<{
+      date: string;
+      period: string;
+      description: string;
+      capacity: number;
+    }> = {},
   ) {
     const res = await request(app.getHttpServer())
       .post('/menus')
@@ -106,7 +118,9 @@ describe('Refeitório API (e2e)', () => {
 
   describe('Autenticação e autorização', () => {
     it('rota protegida sem token retorna 401', async () => {
-      const res = await request(app.getHttpServer()).get('/meal-reservations/my');
+      const res = await request(app.getHttpServer()).get(
+        '/meal-reservations/my',
+      );
       expect(res.status).toBe(401);
     });
 
@@ -125,7 +139,12 @@ describe('Refeitório API (e2e)', () => {
       const res = await request(app.getHttpServer())
         .post('/menus')
         .set('Authorization', `Bearer ${token}`)
-        .send({ date: '2027-01-10', period: 'LUNCH', description: 'Teste', capacity: 5 });
+        .send({
+          date: '2027-01-10',
+          period: 'LUNCH',
+          description: 'Teste',
+          capacity: 5,
+        });
 
       expect(res.status).toBe(403);
     });
@@ -173,9 +192,128 @@ describe('Refeitório API (e2e)', () => {
       const res = await request(app.getHttpServer())
         .post('/menus')
         .set('Authorization', `Bearer ${token}`)
-        .send({ date: '2027-01-10', period: 'LUNCH', description: 'Teste sem capacidade' });
+        .send({
+          date: '2027-01-10',
+          period: 'LUNCH',
+          description: 'Teste sem capacidade',
+        });
 
       expect(res.status).toBe(400);
+    });
+  });
+
+  describe('GET /menus — paginação e filtros (bônus)', () => {
+    it('sem token retorna 401', async () => {
+      const res = await request(app.getHttpServer()).get('/menus');
+      expect(res.status).toBe(401);
+    });
+
+    it('retorna o envelope paginado { data, total, page, limit }', async () => {
+      const admin = await createUser(Role.ADMIN);
+      const adminToken = await loginAs(admin.email);
+      await createMenu(adminToken, { date: '2027-04-01', period: 'LUNCH' });
+      await createMenu(adminToken, { date: '2027-04-02', period: 'LUNCH' });
+
+      const res = await request(app.getHttpServer())
+        .get('/menus?page=1&limit=1')
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ total: 2, page: 1, limit: 1 });
+      expect(res.body.data).toHaveLength(1);
+    });
+
+    it('filtra por period', async () => {
+      const admin = await createUser(Role.ADMIN);
+      const adminToken = await loginAs(admin.email);
+      await createMenu(adminToken, { date: '2027-04-03', period: 'LUNCH' });
+      await createMenu(adminToken, { date: '2027-04-04', period: 'DINNER' });
+
+      const res = await request(app.getHttpServer())
+        .get('/menus?period=DINNER')
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(res.body.total).toBe(1);
+      expect(res.body.data[0].period).toBe('DINNER');
+    });
+
+    it('limit acima de 100 retorna 400 (@Max)', async () => {
+      const admin = await createUser(Role.ADMIN);
+      const adminToken = await loginAs(admin.email);
+
+      const res = await request(app.getHttpServer())
+        .get('/menus?limit=9999')
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(res.status).toBe(400);
+    });
+  });
+
+  describe('activeSlotKey — histórico de cancelamentos', () => {
+    it('reservar de novo após cancelar cria linha NOVA e preserva o histórico', async () => {
+      const admin = await createUser(Role.ADMIN);
+      const employee = await createUser(Role.EMPLOYEE);
+      const adminToken = await loginAs(admin.email);
+      const employeeToken = await loginAs(employee.email);
+      const menu = await createMenu(adminToken, {
+        date: '2027-05-01',
+        period: 'LUNCH',
+        capacity: 5,
+      });
+
+      const r1 = await request(app.getHttpServer())
+        .post(`/menus/${menu.id}/reservations`)
+        .set('Authorization', `Bearer ${employeeToken}`);
+      expect(r1.status).toBe(201);
+
+      await request(app.getHttpServer())
+        .patch(`/meal-reservations/${r1.body.id}/cancel`)
+        .set('Authorization', `Bearer ${employeeToken}`);
+
+      const r2 = await request(app.getHttpServer())
+        .post(`/menus/${menu.id}/reservations`)
+        .set('Authorization', `Bearer ${employeeToken}`);
+      expect(r2.status).toBe(201);
+
+      // As duas asserções que provam a decisão de design do activeSlotKey:
+      expect(r2.body.id).not.toBe(r1.body.id); // linha NOVA, não UPDATE da antiga
+
+      const my = await request(app.getHttpServer())
+        .get('/meal-reservations/my')
+        .set('Authorization', `Bearer ${employeeToken}`);
+      expect(my.body).toHaveLength(2); // histórico completo preservado
+      expect(
+        my.body.filter((r: { status: string }) => r.status === 'CANCELLED'),
+      ).toHaveLength(1);
+      expect(
+        my.body.filter((r: { status: string }) => r.status === 'ACTIVE'),
+      ).toHaveLength(1);
+    });
+
+    it('cancelar a mesma reserva duas vezes retorna 409 na segunda', async () => {
+      const admin = await createUser(Role.ADMIN);
+      const employee = await createUser(Role.EMPLOYEE);
+      const adminToken = await loginAs(admin.email);
+      const employeeToken = await loginAs(employee.email);
+      const menu = await createMenu(adminToken, {
+        date: '2027-05-02',
+        period: 'LUNCH',
+        capacity: 5,
+      });
+
+      const reservation = await request(app.getHttpServer())
+        .post(`/menus/${menu.id}/reservations`)
+        .set('Authorization', `Bearer ${employeeToken}`);
+
+      const first = await request(app.getHttpServer())
+        .patch(`/meal-reservations/${reservation.body.id}/cancel`)
+        .set('Authorization', `Bearer ${employeeToken}`);
+      expect(first.status).toBe(200);
+
+      const second = await request(app.getHttpServer())
+        .patch(`/meal-reservations/${reservation.body.id}/cancel`)
+        .set('Authorization', `Bearer ${employeeToken}`);
+      expect(second.status).toBe(409);
     });
   });
 
@@ -185,7 +323,11 @@ describe('Refeitório API (e2e)', () => {
       const employee = await createUser(Role.EMPLOYEE);
       const adminToken = await loginAs(admin.email);
       const employeeToken = await loginAs(employee.email);
-      const menu = await createMenu(adminToken, { date: '2027-02-01', period: 'LUNCH', capacity: 10 });
+      const menu = await createMenu(adminToken, {
+        date: '2027-02-01',
+        period: 'LUNCH',
+        capacity: 10,
+      });
 
       const first = await request(app.getHttpServer())
         .post(`/menus/${menu.id}/reservations`)
@@ -205,7 +347,11 @@ describe('Refeitório API (e2e)', () => {
       const adminToken = await loginAs(admin.email);
       const token1 = await loginAs(employee1.email);
       const token2 = await loginAs(employee2.email);
-      const menu = await createMenu(adminToken, { date: '2027-02-02', period: 'DINNER', capacity: 1 });
+      const menu = await createMenu(adminToken, {
+        date: '2027-02-02',
+        period: 'DINNER',
+        capacity: 1,
+      });
 
       const first = await request(app.getHttpServer())
         .post(`/menus/${menu.id}/reservations`)
@@ -220,10 +366,16 @@ describe('Refeitório API (e2e)', () => {
 
     it('capacidade sob concorrência real (requisições simultâneas) nunca é excedida', async () => {
       const admin = await createUser(Role.ADMIN);
-      const employees = await Promise.all([1, 2, 3, 4, 5].map(() => createUser(Role.EMPLOYEE)));
+      const employees = await Promise.all(
+        [1, 2, 3, 4, 5].map(() => createUser(Role.EMPLOYEE)),
+      );
       const adminToken = await loginAs(admin.email);
       const tokens = await Promise.all(employees.map((e) => loginAs(e.email)));
-      const menu = await createMenu(adminToken, { date: '2027-02-04', period: 'LUNCH', capacity: 1 });
+      const menu = await createMenu(adminToken, {
+        date: '2027-02-04',
+        period: 'LUNCH',
+        capacity: 1,
+      });
 
       // Dispara as 5 reservas ao mesmo tempo (não em sequência) — é o cenário
       // que o SELECT ... FOR UPDATE em ReservationsService.create() existe pra cobrir.
@@ -240,7 +392,9 @@ describe('Refeitório API (e2e)', () => {
       expect(successes).toHaveLength(1);
       expect(conflicts).toHaveLength(4);
 
-      const activeCount = await prisma.mealReservation.count({ where: { menuId: menu.id, status: 'ACTIVE' } });
+      const activeCount = await prisma.mealReservation.count({
+        where: { menuId: menu.id, status: 'ACTIVE' },
+      });
       expect(activeCount).toBe(1);
     });
   });
@@ -253,7 +407,11 @@ describe('Refeitório API (e2e)', () => {
       const adminToken = await loginAs(admin.email);
       const ownerToken = await loginAs(owner.email);
       const intruderToken = await loginAs(intruder.email);
-      const menu = await createMenu(adminToken, { date: '2027-02-03', period: 'BREAKFAST', capacity: 5 });
+      const menu = await createMenu(adminToken, {
+        date: '2027-02-03',
+        period: 'BREAKFAST',
+        capacity: 5,
+      });
 
       const reservation = await request(app.getHttpServer())
         .post(`/menus/${menu.id}/reservations`)
@@ -274,7 +432,11 @@ describe('Refeitório API (e2e)', () => {
       const adminToken = await loginAs(admin.email);
       const employeeToken = await loginAs(employee.email);
 
-      const menu = await createMenu(adminToken, { date: '2027-03-01', period: 'LUNCH', capacity: 5 });
+      const menu = await createMenu(adminToken, {
+        date: '2027-03-01',
+        period: 'LUNCH',
+        capacity: 5,
+      });
       expect(menu.id).toBeDefined();
 
       const reserveRes = await request(app.getHttpServer())
@@ -293,7 +455,9 @@ describe('Refeitório API (e2e)', () => {
         .set('Authorization', `Bearer ${employeeToken}`);
       expect(myRes.status).toBe(200);
 
-      const cancelled = myRes.body.find((r: { id: number }) => r.id === reserveRes.body.id);
+      const cancelled = myRes.body.find(
+        (r: { id: number }) => r.id === reserveRes.body.id,
+      );
       expect(cancelled.status).toBe('CANCELLED');
     });
   });
