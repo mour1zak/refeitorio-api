@@ -235,10 +235,12 @@ Todos verificados manualmente via Swagger **e** cobertos por teste automatizado 
     `">=24.15.0"` (o piso real exigido), `engines.npm` para `">=11.16.0"` (a versão que de fato
     consome o lockfile sem materializar a cópia aninhada do item 29).
 
-**Limitação registrada**: não foi possível rodar um `npm ci` real (destrutivo — apaga
-`node_modules`) nesta sessão sem parar o servidor de desenvolvimento que estava com um binário
-do Prisma em uso; `npm ci --dry-run` confirmou o lockfile em sincronia. Recomenda-se revalidar
-com `npm ci` real (servidor parado) antes da entrega final.
+**`npm ci` validado de ponta a ponta, com o dono do projeto testando na própria máquina**:
+primeira tentativa falhou por um processo `schema-engine-windows.exe` órfão travando um arquivo
+(ambiente, não código — resolvido encerrando o processo). Depois disso, `npm ci` limpo → `npx
+prisma generate` → `npm run build` → `npm run lint` (0 warnings, 0 errors) → `npm run test:e2e`
+(21/21) — tudo verde, numa instalação genuinamente do zero (486 pacotes, 0 vulnerabilidades).
+O `N1` está fechado com confirmação real, não só análise.
 
 ## 5. Conscientemente fora do escopo (decisão registrada, não esquecimento)
 

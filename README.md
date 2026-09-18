@@ -135,9 +135,19 @@ configuração própria pro tamanho deste projeto.
 
 ## Instalação
 
+Requer **Node ≥24.15.0** e **npm ≥11.16.0** (declarado em `engines` no `package.json`, com
+`.npmrc` fazendo o npm recusar instalar fora dessa faixa em vez de só avisar).
+
 ```bash
 npm install
 ```
+
+Se preferir uma instalação reprodutível, idêntica ao que está no `package-lock.json` (o que um
+CI/pipeline usaria), use `npm ci` em vez de `npm install` — mas repare no passo 3 de "Como
+rodar" logo abaixo: **depois de `npm ci`, é obrigatório rodar `npx prisma generate`** antes de
+`npm run build`, senão o build falha por o Prisma Client ainda não existir. Confirmado
+funcionando de ponta a ponta (`npm ci` limpo → `prisma generate` → `build` → `lint` → 21/21
+testes E2E).
 
 ## Configuração
 
@@ -169,7 +179,7 @@ Variáveis:
    npx prisma migrate dev
    ```
 
-3. Gere o client do Prisma (necessário após todo `git clone`/`npm install`, sem isso o `import { PrismaClient } from '@prisma/client'` falha em build-time):
+3. Gere o client do Prisma (necessário após todo `git clone`/`npm install`/`npm ci`, sem isso o `import { PrismaClient } from '@prisma/client'` falha em build-time):
    ```bash
    npx prisma generate
    ```
