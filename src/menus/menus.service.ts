@@ -1,6 +1,8 @@
 import { ConflictException, Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateMenuDto } from './dto/create-menu.dto';
+import { FindMenusDto } from './dto/find-menus.dto';
 
 @Injectable()
 export class MenusService {
@@ -24,10 +26,25 @@ export class MenusService {
     }
   }
 
-  findAll() {
-    return this.prisma.menu.findMany({
-      orderBy: [{ date: 'asc' }, { period: 'asc' }],
-    });
+  async findAll(query: FindMenusDto) {
+    const { page, limit, date, period } = query;
+
+    const where: Prisma.MenuWhereInput = {
+      ...(date && { date: new Date(date) }),
+      ...(period && { period }),
+    };
+
+    const [data, total] = await Promise.all([
+      this.prisma.menu.findMany({
+        where,
+        orderBy: [{ date: 'asc' }, { period: 'asc' }],
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.menu.count({ where }),
+    ]);
+
+    return { data, total, page, limit };
   }
 
   private isUniqueViolation(error: unknown): boolean {

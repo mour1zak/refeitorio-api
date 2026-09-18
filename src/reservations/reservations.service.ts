@@ -16,6 +16,16 @@ export class ReservationsService {
       return await this.prisma.$transaction(async (tx) => {
         // Existência do menu, duplicidade e capacidade sempre via `tx` — nunca
         // `this.prisma` aqui dentro, senão as três operações deixam de ser atômicas.
+        //
+        // `SELECT ... FOR UPDATE` trava a linha do Menu até esta transação commitar
+        // ou dar rollback. Sem isso, sob READ COMMITTED, duas transações concorrentes
+        // de usuários DIFERENTES podem contar a mesma vaga livre e ambas passarem —
+        // o activeSlotKey não ajuda aqui porque só protege duplicidade do MESMO
+        // usuário (chaves diferentes não colidem no índice único). Com o lock, a
+        // segunda transação espera a primeira commitar antes de contar as reservas
+        // ativas, e aí já enxerga a reserva recém-criada pela primeira.
+        await tx.$queryRaw`SELECT id FROM menus WHERE id = ${menuId} FOR UPDATE`;
+
         const menu = await tx.menu.findUnique({ where: { id: menuId } });
         if (!menu) {
           throw new NotFoundException('Menu não encontrado');

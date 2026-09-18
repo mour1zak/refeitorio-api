@@ -1,7 +1,7 @@
 import { IsEmail, IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
 import { Role } from '@prisma/client';
 import { ApiProperty } from '@nestjs/swagger';
-import { a } from 'vitest/dist/chunks/suite.d.udJtyAgw';
+
 
 
 export class CreateUserDto {
