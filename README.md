@@ -310,11 +310,11 @@ Depois disso:
 npm run test:e2e
 ```
 
-Cada teste zera as tabelas do banco de teste antes de rodar (`beforeEach`) e cria só os dados que precisa — determinístico, não depende de ordem de execução. Confirmado rodando a suíte 5 vezes seguidas com o mesmo resultado (15/15).
+Cada teste zera as tabelas do banco de teste antes de rodar (`beforeEach`) e cria só os dados que precisa — determinístico, não depende de ordem de execução. Confirmado rodando a suíte 3 vezes seguidas com o mesmo resultado (21/21).
 
-## Segurança — vulnerabilidades conhecidas em dependências (aceitação de risco documentada)
+## Segurança — vulnerabilidades em dependências (corrigidas via `overrides`)
 
-`npm audit --omit=dev` reporta **4 vulnerabilidades HIGH**, todas na mesma cadeia de dependência:
+`npm audit` reportava **9 vulnerabilidades (4 HIGH em produção)**, todas na mesma cadeia:
 
 ```
 @prisma/client@7.10.0 (produção)
@@ -323,22 +323,46 @@ Cada teste zera as tabelas do banco de teste antes de rodar (`beforeEach`) e cri
         └── mysql2                          (downgrade de auth plugin vaza credencial em texto claro)
 ```
 
-**Não há correção disponível sem violar o requisito obrigatório do enunciado.** O único fix que o
-`npm audit fix --force` oferece é fazer downgrade para `prisma@6.19.3` — mas o `PRE-05-REFEITORIO.md`
-exige explicitamente **Prisma 7.10.0**. As versões corrigidas de `deepmerge-ts` (`>=8`) e `mysql2`
-(`>3.23`) não são compatíveis com a linha 7.10.0 do Prisma.
+mais 5 vindas de `@nestjs/mau` (devDependency do comando `nest deploy`, que não estava sendo
+usado — sem nenhum arquivo de configuração do mau no repositório, e deploy está fora do escopo).
 
-**Análise de atingibilidade** (por que o risco real é menor do que "4 HIGH" sozinho sugere):
-- **`mysql2`** (vazamento de credencial via downgrade de auth plugin) — **inalcançável nesta
-  aplicação**. O projeto só instancia `PrismaPg` (driver do PostgreSQL); nunca abre conexão MySQL,
-  então o código vulnerável (negociação de auth plugin MySQL) nunca executa. O pacote está presente
-  só como dependência transitiva do CLI do Prisma, não do client em runtime.
-- **`deepmerge-ts`** (esgotamento de pilha em grafos recursivos) — **inalcançável em runtime**. É
-  usado pelo `@prisma/config` para mesclar configuração do **CLI** (`migrate`/`generate`), não pelo
+**`npm audit fix` não resolve isso diretamente** — o único fix automático que ele oferece é fazer
+downgrade pra `prisma@6.19.3`, o que violaria o requisito obrigatório de **Prisma 7.10.0**. A
+causa raiz: `prisma@7.10.0` faz **pin exato** de `mysql2@3.15.3` (não é um range `^3.15.3`), então
+o resolvedor do `npm audit fix` não enxerga pra onde subir dentro daquela árvore — a única saída
+que ele automatiza é trocar o próprio `prisma`.
+
+**A correção real** usa o campo [`overrides`](https://docs.npmjs.com/cli/v10/configuring-npm/package-json#overrides)
+do `package.json`, que existe exatamente pra sobrescrever pins de dependências transitivas sem
+tocar na dependência direta:
+
+```json
+"overrides": {
+  "mysql2": "3.24.4",
+  "deepmerge-ts": "8.0.2"
+}
+```
+
+mais a remoção de `@nestjs/mau` (não usado). **Resultado verificado**: `npm audit` e
+`npm audit --omit=dev` → **0 vulnerabilidades**, com `prisma@7.10.0` e `@prisma/client@7.10.0`
+mantidos intactos, `prisma validate`, `prisma generate`, `prisma migrate deploy` e `npm run build`
+funcionando normalmente, e a suíte de 21 testes E2E passando (confirmado rodando 3 vezes seguidas).
+
+**Análise de atingibilidade** (vale mesmo com a correção aplicada, como justificativa caso o
+`overrides` precise ser revertido no futuro):
+- **`mysql2`** (vazamento de credencial via downgrade de auth plugin) — inalcançável nesta
+  aplicação. O projeto só instancia `PrismaPg` (driver do PostgreSQL); nunca abre conexão MySQL,
+  então o código vulnerável nunca executa. Presente só como dependência transitiva do CLI do
+  Prisma.
+- **`deepmerge-ts`** (esgotamento de pilha em grafos recursivos) — inalcançável em runtime. Usado
+  pelo `@prisma/config` pra mesclar configuração do **CLI** (`migrate`/`generate`), não pelo
   `PrismaClient` em produção. A entrada mesclada não vem de dado controlado por usuário da API.
 
-**Mitigações aplicadas/recomendadas**:
-1. Não rodar `npm audit fix --force` (quebraria o requisito de versão do Prisma).
-2. Em build de produção, `npx prisma generate` roda na etapa de build, nunca em runtime.
-3. Reavaliar a cada release do Prisma 7.x — se uma versão patch resolver a cadeia sem quebrar a
-   API, atualizar.
+**Risco residual do `overrides`**: `deepmerge-ts` 7→8 é um bump *major* de uma dependência
+transitiva que o Prisma não testou nessa combinação exata. Validado nesta rodada: `prisma
+validate`, `prisma generate`, `prisma migrate deploy`/`diff` (inclusive checagem de drift de
+schema) e `npm run build` — todos funcionando. As versões em `overrides` são **fixas** (não
+`^3.24.4`), de propósito — evita que o npm suba sozinho pra uma versão futura não testada. Se uma
+atualização do Prisma quebrar com essa combinação, o `overrides` deve ser removido e a aceitação
+de risco documentada acima volta a valer (o risco real continua baixo, pelos dois caminhos
+inalcançáveis descritos).

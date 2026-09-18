@@ -2,8 +2,8 @@
 
 > Documento gerado pra avaliação externa (humana ou outra IA). Auto-contido — não depende de
 > contexto de conversa anterior. Requisitos completos em `PRE-05-REFEITORIO.md`, na raiz deste
-> repositório. Este projeto passou por **duas rodadas de auditoria externa** (outra IA, revisando
-> só o código publicado no GitHub) — os achados de ambas estão registrados nas seções 4 e 6.
+> repositório. Este projeto passou por **três rodadas de auditoria externa** (outra IA, revisando
+> só o código publicado no GitHub) — os achados das três estão registrados na seção 4.
 
 ## 1. Checklist — Obrigatório (`PRE-05-REFEITORIO.md`)
 
@@ -107,9 +107,11 @@ Todos verificados manualmente via Swagger **e** cobertos por teste automatizado 
   desligado deliberadamente porque quebraria o Swagger UI
 - `npm run lint` **100% limpo** (`oxlint --type-aware`, incluindo a regra `no-floating-promises`)
   e `npx prettier --check` **100% conforme** em todo o `src/`/`test/`
-- Seção de segurança no README documentando as 4 vulnerabilidades HIGH em dependências de
-  produção que não têm correção disponível sem violar o requisito de versão do Prisma — com
-  análise de atingibilidade, não só o número do `npm audit`
+- `npm audit` **0 vulnerabilidades** (eram 9, 4 HIGH em produção) via `overrides` no
+  `package.json` (`mysql2@3.24.4`, `deepmerge-ts@8.0.2`, versões fixas) + remoção de
+  `@nestjs/mau` (não usado) — sem tocar em `prisma`/`@prisma/client`, que seguem `7.10.0` exatos.
+  Seção de segurança no README com a análise de atingibilidade completa, incluindo o risco
+  residual do bump major do `deepmerge-ts`, validado contra `migrate deploy`/`diff` e `build`
 - Todos os gates de revisão das fases 1–4 respondidos por escrito no README (10/10, incluindo os
   dois sobre `onDelete` e credenciais do `docker-compose.yml` que faltavam)
 - `docker-compose.yml` com `healthcheck` do Postgres
@@ -174,11 +176,23 @@ Todos verificados manualmente via Swagger **e** cobertos por teste automatizado 
 21. `STATUS-FINAL-CHECKLIST.md` (este arquivo) dizia "14 testes" quando já eram 15. Corrigido
     (e agora são 21, com os testes da seção 2 acima).
 
-### Documentado, não corrigido (risco aceito e justificado)
-- **4 vulnerabilidades HIGH** em dependências de produção (`mysql2`, `deepmerge-ts`, via peer
-  dependency `prisma` do `@prisma/client`) — sem correção disponível sem fazer downgrade pra
-  `prisma@6.19.3`, o que violaria o requisito obrigatório de **Prisma 7.10.0**. Análise de
-  atingibilidade completa no README, seção "Segurança".
+### Achados pela 3ª auditoria externa (contestou uma conclusão da 2ª rodada, corrigido)
+
+22. **A conclusão anterior sobre as 4 vulnerabilidades HIGH estava incorreta.** A rodada 2 tinha
+    concluído "sem correção disponível sem violar o requisito de Prisma 7.10.0" — a 3ª auditoria
+    mostrou, com experimento reproduzível, que o campo `overrides` do `package.json` resolve a
+    cadeia toda (`mysql2`, `deepmerge-ts`) sem tocar em `prisma`/`@prisma/client`. Verificado de
+    forma independente nesta rodada (não só aceito): `npm audit` → 0/0, mantendo `prisma@7.10.0`,
+    com `prisma validate`/`generate`/`migrate deploy`/`build` funcionando.
+23. **Drift de schema real no `updatedAt`** — a migration que adicionou `updatedAt` usou
+    `DEFAULT CURRENT_TIMESTAMP` pra fazer backfill das linhas existentes, mas não removia esse
+    `DEFAULT` depois. Como o Prisma trata `@updatedAt` só no client (não espera `DEFAULT` na
+    coluna), isso gerava drift real entre o schema declarado e o banco. **Confirmado nesta rodada**
+    rodando `prisma migrate diff` direto contra o banco de desenvolvimento (algo que a própria
+    auditoria que encontrou o problema não conseguiu executar, por falta de Postgres no ambiente
+    dela) — o diff apontou exatamente o `ALTER COLUMN ... DROP DEFAULT` previsto. Corrigido com
+    uma migration de continuação (`20260918133350_drop_updated_at_default`), aplicada em
+    desenvolvimento e teste; `prisma migrate diff --exit-code` confirma zero diferença agora.
 
 ## 5. Conscientemente fora do escopo (decisão registrada, não esquecimento)
 
@@ -196,8 +210,9 @@ Todos verificados manualmente via Swagger **e** cobertos por teste automatizado 
 ## 6. Pendências / decisões em aberto
 
 Nenhuma pendência técnica conhecida no momento. Único passo manual restante: **revisar e rodar o
-commit/push final** das mudanças descritas nas seções 4 (itens 10–21) e no `updatedAt` de
-`User`/`Menu` (schema + migration já aplicados em desenvolvimento e teste).
+commit/push final** das mudanças descritas na seção 4 (itens 10–23), incluindo o `overrides` de
+segurança e as duas migrations do `updatedAt` (schema + migrations já aplicados em desenvolvimento
+e teste, `npm audit` confirmado em 0/0).
 
 ## 7. Como verificar por conta própria
 

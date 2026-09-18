@@ -7,7 +7,6 @@
   "license": "UNLICENSED",
   "scripts": {
     "build": "nest build",
-    "deploy": "nest deploy",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",
@@ -45,7 +44,6 @@
   },
   "devDependencies": {
     "@nestjs/cli": "^12.0.0",
-    "@nestjs/mau": "^0.2.6",
     "@nestjs/schematics": "^12.0.0",
     "@nestjs/testing": "^12.0.1",
     "@types/bcryptjs": "^2.4.6",
@@ -70,5 +68,9 @@
   "allowScripts": {
     "@prisma/engines@7.10.0": true,
     "prisma@7.10.0": true
+  },
+  "overrides": {
+    "mysql2": "3.24.4",
+    "deepmerge-ts": "8.0.2"
   }
 }
