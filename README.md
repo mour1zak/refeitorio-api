@@ -52,9 +52,16 @@ pelo bônus):
   demais headers continuam ativos. Confirmado que o Swagger e o login continuam funcionando com
   as duas libs ativas, e que nenhuma vulnerabilidade nova entrou no `npm audit` por causa delas
   (`npm audit` está em 0 vulnerabilidades no total — ver seção "Segurança" mais abaixo).
-- `engines`/`packageManager` declarados no `package.json` — fixa qual versão de Node/npm gerou o
-  `package-lock.json`, pra evitar que versões diferentes de npm resolvam dependências peer (como
-  o `typescript` exigido pelo `@prisma/dev`) de formas diferentes e dessincronizem o lockfile.
+- `engines`/`packageManager` declarados no `package.json`, com `.npmrc` (`engine-strict=true`)
+  fazendo o `npm` **recusar instalar** (não só avisar) fora da faixa — `node >=24.15.0`
+  (a faixa real exigida por uma dependência transitiva, `@nestjs/schematics`, não uma faixa
+  arbitrária) e `npm >=11.16.0`. Existe porque `tsconfck` (dependência transitiva de
+  `vite-tsconfig-paths`) declara um peer **opcional** em `typescript@^5.0.0`, que o `typescript@6.x`
+  deste projeto não satisfaz — em npm mais antigo (10.x) isso podia fazer o npm materializar uma
+  cópia aninhada de `typescript` não registrada no lockfile, quebrando `npm ci`. Corrigido em duas
+  camadas: um `overrides` (`"tsconfck": { "typescript": "$typescript" }`) forçando o peer a usar o
+  `typescript` da raiz em vez de baixar uma cópia à parte, **e** o `engines`/`.npmrc` como rede de
+  segurança caso alguém ainda tente instalar com um npm desatualizado demais.
 
 **Conscientemente fora do escopo** (decisão registrada, não item esquecido): Docker da aplicação
 (só o Postgres é containerizado), CI/CD, cobertura de código formal, logs estruturados/observabilidade,

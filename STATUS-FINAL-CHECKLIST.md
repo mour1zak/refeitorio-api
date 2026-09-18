@@ -2,9 +2,10 @@
 
 > Documento gerado pra avaliação externa (humana ou outra IA). Auto-contido — não depende de
 > contexto de conversa anterior. Requisitos completos em `PRE-05-REFEITORIO.md`, na raiz deste
-> repositório. Este projeto passou por **quatro rodadas de auditoria externa** (outra IA,
-> revisando só o código publicado no GitHub) — os achados das quatro estão registrados na seção 4.
-> A 4ª rodada confirmou zero regressão e considerou o projeto **pronto para entrega**.
+> repositório. Este projeto passou por **cinco rodadas de auditoria externa** (outra IA,
+> revisando só o código publicado no GitHub) — os achados das cinco estão registrados na seção 4.
+> A 4ª rodada errou o diagnóstico de uma causa raiz (`npm ci`), corrigida pela 5ª — registrado
+> honestamente como parte do histórico, não escondido.
 
 ## 1. Checklist — Obrigatório (`PRE-05-REFEITORIO.md`)
 
@@ -197,12 +198,11 @@ Todos verificados manualmente via Swagger **e** cobertos por teste automatizado 
 
 ### Achados pela 4ª auditoria externa (verificação final, nenhuma regressão, 2 achados novos pré-existentes)
 
-24. **`npm ci` falhava** (dessincronia entre `package.json`/`package-lock.json` na resolução de
-    peer dependency do `typescript` via `@prisma/dev` → `valibot`) — pré-existente desde o
-    primeiro commit, não era regressão. Corrigido: `engines`/`packageManager` declarados no
-    `package.json`, fixando qual versão de Node/npm deve gerar o lockfile (evita que versões
-    diferentes de npm resolvam peers de forma diferente).
-25. **Node/npm não declarados** (`engines`/`packageManager` ausentes) — mesma correção do item 24.
+24. **`npm ci` falhava** — diagnóstico inicial (`@prisma/dev` → `valibot`) estava **impreciso**;
+    corrigido de verdade só na 5ª rodada (item 29 abaixo). A tentativa desta rodada
+    (`engines`/`packageManager` sozinhos) **não resolveu** — ver item 29.
+25. **Node/npm não declarados** (`engines`/`packageManager` ausentes) — primeira correção parcial,
+    completada na 5ª rodada (item 30 abaixo, faixa estava frouxa demais).
 26. `RequestUser.role` tipado como `string` em vez do enum `Role`, obrigando um cast `as Role`
     num ponto de autorização (`RolesGuard`). Corrigido: tipo forte, cast removido.
 27. Rate limiting em `/auth/login` não constava na lista "fora do escopo" do README (parecia
@@ -210,6 +210,35 @@ Todos verificados manualmente via Swagger **e** cobertos por teste automatizado 
 28. Timeout de 5s da transação interativa do Prisma sob concorrência muito alta (>~50 requisições
     simultâneas no mesmo cardápio) não estava documentado. Corrigido: nota no README explicando o
     limite e a mitigação de produção (coluna `reservedCount` atômica).
+
+### Achados pela 5ª auditoria externa (corrigiu diagnóstico da própria 4ª rodada)
+
+29. **`npm ci` continuava falhando** — a correção da 4ª rodada (só declarar `engines`/`packageManager`)
+    não resolvia nada na prática: `engines` é *advisory* por padrão (o npm só avisa e segue em
+    frente) e `packageManager` não é honrado de forma confiável para `npm` (só para
+    yarn/pnpm via corepack). **Causa raiz real, identificada com precisão nesta rodada**:
+    `tsconfck` (dependência transitiva de `vite-tsconfig-paths`) declara um peer **opcional** em
+    `typescript@^5.0.0`; o `typescript@6.x` da raiz deste projeto não satisfaz esse range. Em
+    `npm` 10.x isso faz o instalador materializar uma cópia aninhada de `typescript@5.9.3` que o
+    lockfile não registra — `npm ci` recusa por lockfile "fora de sincronia". Confirmado
+    reproduzindo a análise da cadeia de dependências (`tsconfck.peerDependenciesMeta.typescript.optional === true`,
+    versão da raiz `6.0.3` não satisfaz `^5.0.0`). **Corrigido em duas camadas**: (1)
+    `"overrides": { "tsconfck": { "typescript": "$typescript" } }` — elimina a causa raiz,
+    forçando o peer a usar sempre o `typescript` da raiz, nunca uma cópia aninhada; (2)
+    `.npmrc` com `engine-strict=true` + faixa de `engines` corrigida (item 30) como rede de
+    segurança, transformando qualquer incompatibilidade futura numa mensagem clara em vez de um
+    `EUSAGE` confuso sobre `typescript@5.9.3`.
+30. **Faixa de `engines.node` mais frouxa que uma dependência transitiva exige** —
+    `">=24.0.0"` permitia, por exemplo, Node `24.5.0`, que **não satisfaz**
+    `@nestjs/schematics`'s `engines.node` real (`^22.22.3 || ^24.15.0 || >=26.0.0`, confirmado
+    lendo o `package.json` do pacote instalado). Corrigido: `engines.node` ajustado para
+    `">=24.15.0"` (o piso real exigido), `engines.npm` para `">=11.16.0"` (a versão que de fato
+    consome o lockfile sem materializar a cópia aninhada do item 29).
+
+**Limitação registrada**: não foi possível rodar um `npm ci` real (destrutivo — apaga
+`node_modules`) nesta sessão sem parar o servidor de desenvolvimento que estava com um binário
+do Prisma em uso; `npm ci --dry-run` confirmou o lockfile em sincronia. Recomenda-se revalidar
+com `npm ci` real (servidor parado) antes da entrega final.
 
 ## 5. Conscientemente fora do escopo (decisão registrada, não esquecimento)
 

@@ -6,8 +6,8 @@
   "private": true,
   "license": "UNLICENSED",
   "engines": {
-    "node": ">=24.0.0",
-    "npm": ">=10.9.0"
+    "node": ">=24.15.0",
+    "npm": ">=11.16.0"
   },
   "packageManager": "npm@11.16.0",
   "scripts": {
@@ -76,6 +76,9 @@
   },
   "overrides": {
     "mysql2": "3.24.4",
-    "deepmerge-ts": "8.0.2"
+    "deepmerge-ts": "8.0.2",
+    "tsconfck": {
+      "typescript": "$typescript"
+    }
   }
 }
