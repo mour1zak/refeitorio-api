@@ -2,8 +2,9 @@
 
 > Documento gerado pra avaliação externa (humana ou outra IA). Auto-contido — não depende de
 > contexto de conversa anterior. Requisitos completos em `PRE-05-REFEITORIO.md`, na raiz deste
-> repositório. Este projeto passou por **três rodadas de auditoria externa** (outra IA, revisando
-> só o código publicado no GitHub) — os achados das três estão registrados na seção 4.
+> repositório. Este projeto passou por **quatro rodadas de auditoria externa** (outra IA,
+> revisando só o código publicado no GitHub) — os achados das quatro estão registrados na seção 4.
+> A 4ª rodada confirmou zero regressão e considerou o projeto **pronto para entrega**.
 
 ## 1. Checklist — Obrigatório (`PRE-05-REFEITORIO.md`)
 
@@ -194,6 +195,22 @@ Todos verificados manualmente via Swagger **e** cobertos por teste automatizado 
     uma migration de continuação (`20260918133350_drop_updated_at_default`), aplicada em
     desenvolvimento e teste; `prisma migrate diff --exit-code` confirma zero diferença agora.
 
+### Achados pela 4ª auditoria externa (verificação final, nenhuma regressão, 2 achados novos pré-existentes)
+
+24. **`npm ci` falhava** (dessincronia entre `package.json`/`package-lock.json` na resolução de
+    peer dependency do `typescript` via `@prisma/dev` → `valibot`) — pré-existente desde o
+    primeiro commit, não era regressão. Corrigido: `engines`/`packageManager` declarados no
+    `package.json`, fixando qual versão de Node/npm deve gerar o lockfile (evita que versões
+    diferentes de npm resolvam peers de forma diferente).
+25. **Node/npm não declarados** (`engines`/`packageManager` ausentes) — mesma correção do item 24.
+26. `RequestUser.role` tipado como `string` em vez do enum `Role`, obrigando um cast `as Role`
+    num ponto de autorização (`RolesGuard`). Corrigido: tipo forte, cast removido.
+27. Rate limiting em `/auth/login` não constava na lista "fora do escopo" do README (parecia
+    esquecimento, não decisão). Corrigido: registrado explicitamente.
+28. Timeout de 5s da transação interativa do Prisma sob concorrência muito alta (>~50 requisições
+    simultâneas no mesmo cardápio) não estava documentado. Corrigido: nota no README explicando o
+    limite e a mitigação de produção (coluna `reservedCount` atômica).
+
 ## 5. Conscientemente fora do escopo (decisão registrada, não esquecimento)
 
 - Docker da aplicação (só o Postgres é containerizado)
@@ -205,14 +222,15 @@ Todos verificados manualmente via Swagger **e** cobertos por teste automatizado 
   pior caso é dois cancelamentos simultâneos convergindo pro mesmo estado final, sem efeito
   cumulativo nem violação de regra de negócio)
 - Rate limiting em `/auth/login` (força bruta de senha ainda é possível — `@nestjs/throttler`
-  resolveria, não implementado nesta rodada)
+  resolveria; registrado explicitamente aqui e no README após a 4ª auditoria apontar que estava
+  faltando essa decisão por escrito)
 
 ## 6. Pendências / decisões em aberto
 
-Nenhuma pendência técnica conhecida no momento. Único passo manual restante: **revisar e rodar o
-commit/push final** das mudanças descritas na seção 4 (itens 10–23), incluindo o `overrides` de
-segurança e as duas migrations do `updatedAt` (schema + migrations já aplicados em desenvolvimento
-e teste, `npm audit` confirmado em 0/0).
+**Nenhuma.** A 4ª auditoria externa revalidou tudo (build com e sem devDependencies, lint,
+Prettier, `npm audit`, ausência de segredos no histórico do Git) e concluiu **"pronto para
+entrega"**. Único passo manual restante: **revisar e rodar o commit/push final** das mudanças
+descritas na seção 4 (itens 10–28).
 
 ## 7. Como verificar por conta própria
 

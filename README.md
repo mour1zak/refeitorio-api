@@ -51,10 +51,15 @@ pelo bônus):
   desligado deliberadamente porque o CSP padrão quebra o Swagger UI (scripts/estilos inline); os
   demais headers continuam ativos. Confirmado que o Swagger e o login continuam funcionando com
   as duas libs ativas, e que nenhuma vulnerabilidade nova entrou no `npm audit` por causa delas
-  (as 9 já existentes vêm de `prisma`/`@nestjs/mau`/`mysql2`/`undici`, nada relacionado).
+  (`npm audit` está em 0 vulnerabilidades no total — ver seção "Segurança" mais abaixo).
+- `engines`/`packageManager` declarados no `package.json` — fixa qual versão de Node/npm gerou o
+  `package-lock.json`, pra evitar que versões diferentes de npm resolvam dependências peer (como
+  o `typescript` exigido pelo `@prisma/dev`) de formas diferentes e dessincronizem o lockfile.
 
 **Conscientemente fora do escopo** (decisão registrada, não item esquecido): Docker da aplicação
-(só o Postgres é containerizado), CI/CD, cobertura de código formal, logs estruturados/observabilidade.
+(só o Postgres é containerizado), CI/CD, cobertura de código formal, logs estruturados/observabilidade,
+rate limiting em `/auth/login` (força bruta de senha continua possível — `@nestjs/throttler`
+resolveria isso, avaliado e adiado conscientemente pra não expandir escopo além do pedido).
 
 ## Estrutura de pastas
 
@@ -256,6 +261,8 @@ Sob o isolamento padrão do Postgres (`READ COMMITTED`), duas transações conco
 
 **Por que a checagem de capacidade também precisou de um `SELECT ... FOR UPDATE`.**
 O `activeSlotKey` só protege contra duplicidade do **mesmo** usuário — a chave é `${userId}:${date}:${period}`, então dois usuários **diferentes** disputando a última vaga têm chaves diferentes e não colidem no índice único. Sem proteção adicional, sob `READ COMMITTED`, várias transações concorrentes podiam contar a mesma vaga livre (`tx.mealReservation.count(...) < menu.capacity`) e todas passarem antes de qualquer uma commitar — comprovado nesta rodada: um teste com 5 requisições simultâneas para 1 vaga só resultava em `1 sucesso` **com** o lock; sem ele, as 5 passavam (`5 sucessos` para `capacity: 1`). A correção foi travar a linha do `Menu` com `SELECT id FROM menus WHERE id = $1 FOR UPDATE` logo no início da transação: a segunda transação concorrente fica bloqueada até a primeira commitar, e aí sim enxerga a reserva recém-criada na contagem. Teste de concorrência real (`Promise.all` com 5 requisições simultâneas) cobre esse cenário em `test/app.e2e-spec.ts`, estável em múltiplas execuções.
+
+**Limite conhecido do `FOR UPDATE` sob concorrência muito alta.** O lock serializa as reservas por cardápio — a N-ésima requisição concorrente espera todas as N-1 anteriores. Com 5 simultâneas (o cenário testado) isso é imperceptível. Com centenas de requisições disputando o mesmo cardápio ao mesmo tempo (ex: abertura do almoço num refeitório grande), as últimas da fila podem estourar o timeout padrão da transação interativa do Prisma (5000ms) e retornar `500` em vez de `409`. Não é um problema para o volume desta avaliação, mas é a resposta correta para "e se 500 pessoas clicarem ao mesmo tempo?": mitigação seria aumentar o `timeout` do `$transaction`, ou trocar o lock por uma coluna `reservedCount` no `Menu` atualizada atomicamente via `UPDATE ... SET "reservedCount" = "reservedCount" + 1 WHERE id = $1 AND "reservedCount" < capacity` (sem serialização, escala melhor sob alta concorrência) — fora do escopo desta rodada.
 
 **Por que o Prisma Client usa um driver adapter (`PrismaPg`) em vez do padrão antigo.**
 Segue o padrão do Prisma 7: a `datasource` no `schema.prisma` não tem `url`; a connection string é lida só em `prisma.config.ts` (usado pelo Prisma CLI) e, em runtime, pelo `PrismaService`, que constrói `new PrismaPg({ connectionString: process.env.DATABASE_URL })` e passa isso como `adapter` para `super({ adapter })`. Uma única fonte de verdade (a variável de ambiente), lida em dois pontos de entrada diferentes.
